@@ -6,7 +6,7 @@ import { useDamage } from '../context/DamageContext'
 import DamageFilters from '../components/Damage/DamageFilters'
 import ReportDamageModal from '../components/Damage/ReportDamageModal'
 import SeverityBadge from '../components/Damage/SeverityBadge'
-import { Plus, Filter, Navigation } from 'lucide-react'
+import { Plus, Filter, Navigation, Image as ImageIcon } from 'lucide-react'
 import 'leaflet/dist/leaflet.css'
 
 // Fix for default markers in react-leaflet
@@ -54,6 +54,20 @@ const severityIcons = {
     iconAnchor: [12, 41],
     popupAnchor: [1, -34],
   })
+}
+
+// Helper function to get photo URL
+const getPhotoUrl = (photo) => {
+  if (!photo) return null
+  // New format: { url: "...", publicId: "..." }
+  if (typeof photo === 'object' && photo.url) {
+    return photo.url
+  }
+  // Old format: string URL
+  if (typeof photo === 'string') {
+    return photo
+  }
+  return null
 }
 
 function LocationMarker({ onLocationSelect }) {
@@ -109,7 +123,6 @@ const MapView = () => {
 
   console.log('🗺️ MapView - Total damages:', damages.length)
   console.log('🗺️ MapView - Filtered damages:', filteredDamages.length)
-  console.log('🗺️ Sample damage:', filteredDamages[0])
 
   return (
     <div className="h-screen flex flex-col">
@@ -165,7 +178,6 @@ const MapView = () => {
           <LocationMarker onLocationSelect={handleLocationSelect} />
           
           {filteredDamages.map((damage, index) => {
-            // ✅ FIX: Access coordinates from damage.location
             const lat = damage.location?.latitude
             const lng = damage.location?.longitude
             
@@ -174,14 +186,17 @@ const MapView = () => {
               return null
             }
             
-            // ✅ Ensure severity is valid
             const severity = damage.severity || 'moderate'
             const icon = severityIcons[severity] || severityIcons.moderate
             
+            // Get photo URL
+            const firstPhoto = damage.photos?.[0]
+            const photoUrl = getPhotoUrl(firstPhoto)
+            
             return (
               <Marker
-                key={damage._id || `damage-${index}`} // ✅ Added unique key
-                position={[lat, lng]} // ✅ Fixed: Use lat and lng from location
+                key={damage._id || `damage-${index}`}
+                position={[lat, lng]}
                 icon={icon}
               >
                 <Popup>
@@ -192,15 +207,20 @@ const MapView = () => {
                       </h3>
                       <SeverityBadge severity={severity} />
                     </div>
-                    {damage.photos && damage.photos.length > 0 && damage.photos[0] && (
+                    {photoUrl ? (
                       <img
-                        src={damage.photos[0]}
+                        src={photoUrl}
                         alt="Damage"
                         className="w-full h-32 object-cover rounded mb-2"
                         onError={(e) => {
-                          e.target.style.display = 'none'
+                          e.target.onerror = null
+                          e.target.src = `data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgdmlld0JveD0iMCAwIDIwMCAyMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjIwMCIgaGVpZ2h0PSIyMDAiIGZpbGw9IiNFNUU1RTUiLz48Y2lyY2xlIGN4PSIxMDAiIGN5PSIxMDAiIHI9IjMwIiBmaWxsPSIjQkJCQkJCIi8+PHBhdGggZD0iTTEyNSAxMDBMNzUgMTUwTTc1IDUwTDEyNSAxMDAiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+`
                         }}
                       />
+                    ) : (
+                      <div className="w-full h-32 bg-gray-100 rounded mb-2 flex items-center justify-center">
+                        <ImageIcon className="h-8 w-8 text-gray-400" />
+                      </div>
                     )}
                     <p className="text-sm text-gray-600 mb-2">
                       {damage.description || 'No description'}

@@ -1,7 +1,6 @@
-// src/pages/DamageDetails.jsx
 import React, { useState, useEffect } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
-import { ArrowLeft, MapPin, Calendar, AlertCircle, Image as ImageIcon, CheckCircle, XCircle } from 'lucide-react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { ArrowLeft, MapPin, Calendar, AlertCircle, CheckCircle, XCircle } from 'lucide-react'
 import { useDamage } from '../context/DamageContext'
 import SeverityBadge from '../components/Damage/SeverityBadge'
 
@@ -17,7 +16,6 @@ const DamageDetails = () => {
       if (foundDamage) {
         setDamage(foundDamage)
       } else {
-        // Try to fetch single damage if not in context
         console.log('Damage not found in context, would fetch from API')
       }
     }
@@ -59,7 +57,25 @@ const DamageDetails = () => {
     verificationStatus = 'pending'
   } = damage
 
-  const { address = 'No address provided' } = location
+  const { 
+    address = 'No address provided',
+    latitude,
+    longitude
+  } = location
+
+  // Helper function to get photo URL
+  const getPhotoUrl = (photo) => {
+    if (!photo) return null
+    // New format: { url: "...", publicId: "..." }
+    if (typeof photo === 'object' && photo.url) {
+      return photo.url
+    }
+    // Old format: string URL
+    if (typeof photo === 'string') {
+      return photo
+    }
+    return null
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -89,15 +105,24 @@ const DamageDetails = () => {
           {photos.length > 0 && (
             <div className="bg-gray-100 p-4">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {photos.map((photo, index) => (
-                  <div key={index} className="aspect-square bg-white rounded-lg overflow-hidden shadow">
-                    <img
-                      src={photo}
-                      alt={`Damage ${index + 1}`}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                ))}
+                {photos.map((photo, index) => {
+                  const photoUrl = getPhotoUrl(photo)
+                  if (!photoUrl) return null
+                  
+                  return (
+                    <div key={index} className="aspect-square bg-white rounded-lg overflow-hidden shadow">
+                      <img
+                        src={photoUrl}
+                        alt={`Damage ${index + 1}`}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          e.target.onerror = null
+                          e.target.src = `data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgdmlld0JveD0iMCAwIDIwMCAyMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjIwMCIgaGVpZ2h0PSIyMDAiIGZpbGw9IiNFNUU1RTUiLz48Y2lyY2xlIGN4PSIxMDAiIGN5PSIxMDAiIHI9IjMwIiBmaWxsPSIjQkJCQkJCIi8+PHBhdGggZD0iTTEyNSAxMDBMNzUgMTUwTTc1IDUwTDEyNSAxMDAiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+`
+                        }}
+                      />
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
@@ -146,9 +171,9 @@ const DamageDetails = () => {
                   Location Details
                 </h3>
                 <p className="text-gray-900">{address}</p>
-                {location.latitude && location.longitude && (
+                {latitude && longitude && (
                   <p className="text-sm text-gray-500 mt-2">
-                    Coordinates: {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
+                    Coordinates: {parseFloat(latitude).toFixed(6)}, {parseFloat(longitude).toFixed(6)}
                   </p>
                 )}
               </div>
@@ -165,6 +190,10 @@ const DamageDetails = () => {
                     <span className="text-gray-600">Severity:</span>
                     <SeverityBadge severity={severity} />
                   </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Photos:</span>
+                    <span className="font-medium">{photos.length} photo(s)</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -177,9 +206,11 @@ const DamageDetails = () => {
               >
                 Close
               </button>
-              <button className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
-                Mark as Verified
-              </button>
+              {verificationStatus === 'pending' && (
+                <button className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
+                  Mark as Verified
+                </button>
+              )}
             </div>
           </div>
         </div>

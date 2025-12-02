@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Upload, MapPin, Camera, Check, AlertCircle } from 'lucide-react'
 import { useDamage } from '../../context/DamageContext'
-import damageService from '../../services/damageService'
 import toast from 'react-hot-toast'
 
 const ReportDamageModal = ({ isOpen, onClose, initialLocation }) => {
@@ -94,9 +93,7 @@ const ReportDamageModal = ({ isOpen, onClose, initialLocation }) => {
         name: file.name,
         size: file.size,
         type: file.type,
-        lastModified: file.lastModified,
-        // For demo/testing purposes - you can also use a placeholder
-        placeholder: `https://via.placeholder.com/300x200/FF6B6B/FFFFFF?text=Damage+Photo`
+        lastModified: file.lastModified
       }
     })
     
@@ -212,13 +209,10 @@ const ReportDamageModal = ({ isOpen, onClose, initialLocation }) => {
       formDataToSend.append('longitude', lng)
       formDataToSend.append('address', formData.address)
       
-      // Add each photo file
-      photos.forEach((photo, index) => {
-        formDataToSend.append(`photo_${index}`, photo.file)
+      // Add each photo file - USE FIELD NAME 'photos' (SINGULAR BUT ARRAY)
+      photos.forEach((photo) => {
+        formDataToSend.append('photos', photo.file) // CRITICAL: Field name must be 'photos'
       })
-      
-      // Add photo count
-      formDataToSend.append('photoCount', photos.length)
 
       console.log('📤 Submitting damage report...', {
         description: formData.description,
@@ -233,14 +227,25 @@ const ReportDamageModal = ({ isOpen, onClose, initialLocation }) => {
       // Show loading toast
       const loadingToast = toast.loading('Submitting damage report...')
       
-      // Use the damage service
-      const newDamage = await damageService.reportDamage(formDataToSend)
+      // Use fetch to send FormData to the correct endpoint
+      const response = await fetch('/api/damages', {
+        method: 'POST',
+        body: formDataToSend  // Don't set Content-Type header for FormData
+      })
+      
+      const result = await response.json()
       
       // Dismiss loading toast
       toast.dismiss(loadingToast)
       
-      // Add to context
-      addDamage(newDamage)
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to submit damage report')
+      }
+      
+      console.log('✅ Damage report submitted:', result)
+      
+      // Add to context - result contains damage in result.damage
+      addDamage(result.damage)
       
       toast.success(
         <div className="flex items-center gap-2">
@@ -616,10 +621,6 @@ const ReportDamageModal = ({ isOpen, onClose, initialLocation }) => {
                                   src={photo.preview}
                                   alt={`Damage photo ${index + 1}`}
                                   className="w-full h-full object-cover"
-                                  onError={(e) => {
-                                    e.target.onerror = null
-                                    e.target.src = photo.placeholder
-                                  }}
                                 />
                               </div>
                               <div className="text-xs text-gray-600 truncate mb-1">

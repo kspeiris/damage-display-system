@@ -5,9 +5,9 @@ import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
 import dotenv from 'dotenv'
 import multer from 'multer'
+import { uploadToCloudinary, deleteFromCloudinary } from './utils/cloudinary.js'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import fs from 'fs'
 
 // ES module fix for __dirname
 const __filename = fileURLToPath(import.meta.url)
@@ -18,22 +18,8 @@ dotenv.config()
 const app = express()
 const PORT = process.env.PORT || 5000
 
-// Create uploads directory if it doesn't exist
-const uploadsDir = path.join(__dirname, 'uploads')
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true })
-}
-
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadsDir)
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9)
-    cb(null, uniqueSuffix + path.extname(file.originalname))
-  }
-})
+// Configure multer for memory storage (to get buffer for Cloudinary)
+const storage = multer.memoryStorage()
 
 const upload = multer({ 
   storage: storage,
@@ -70,16 +56,13 @@ app.use('/api/', limiter)
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
-// Serve uploaded files statically
-app.use('/uploads', express.static(uploadsDir))
-
 // Logging middleware
 app.use((req, res, next) => {
   console.log(`${req.method} ${req.url}`)
   next()
 })
 
-// Simple Damage Report Model
+// Updated Damage Report Model with Cloudinary support
 const damageReportSchema = new mongoose.Schema({
   description: {
     type: String,
@@ -111,7 +94,16 @@ const damageReportSchema = new mongoose.Schema({
     },
     address: String
   },
-  photos: [String], // Store image URLs as strings
+  photos: [
+    {
+      url: String,
+      publicId: String,
+      uploadedAt: {
+        type: Date,
+        default: Date.now
+      }
+    }
+  ],
   verificationStatus: {
     type: String,
     enum: ['pending', 'verified', 'rejected'],
@@ -220,10 +212,10 @@ app.get('/api/damages/:id', async (req, res) => {
   }
 })
 
-// ✅ ENDPOINT 1: CREATE DAMAGE REPORT WITH FILE UPLOADS
+// ✅ ENDPOINT 1: CREATE DAMAGE REPORT WITH FILE UPLOADS (CLOUDINARY)
 app.post('/api/damages', upload.array('photos', 5), async (req, res) => {
   try {
-    console.log('📝 POST /api/damages (with files)')
+    console.log('📝 POST /api/damages (with Cloudinary upload)')
     console.log('📦 Body:', req.body)
     console.log('📸 Files:', req.files?.length || 0, 'files')
     
@@ -238,12 +230,6 @@ app.post('/api/damages', upload.array('photos', 5), async (req, res) => {
 
     // Validate required fields
     if (!description || !severity || !propertyType || !latitude || !longitude) {
-      // Clean up uploaded files if validation fails
-      if (req.files) {
-        req.files.forEach(file => {
-          fs.unlinkSync(file.path)
-        })
-      }
       return res.status(400).json({ 
         success: false,
         error: 'Missing required fields',
@@ -257,14 +243,24 @@ app.post('/api/damages', upload.array('photos', 5), async (req, res) => {
       })
     }
 
-    // Process uploaded files
-    const photoUrls = []
+    // Process uploaded files - upload to Cloudinary
+    const photos = []
     if (req.files && req.files.length > 0) {
-      req.files.forEach(file => {
-        // Generate URL relative to server
-        const photoUrl = `/uploads/${file.filename}`
-        photoUrls.push(photoUrl)
-      })
+      console.log('⬆️ Uploading to Cloudinary...')
+      
+      for (const file of req.files) {
+        try {
+          const result = await uploadToCloudinary(file.buffer)
+          photos.push({
+            url: result.secure_url,
+            publicId: result.public_id
+          })
+          console.log(`✅ Uploaded to Cloudinary: ${result.public_id}`)
+        } catch (uploadError) {
+          console.error('❌ Cloudinary upload failed:', uploadError)
+          throw new Error(`Failed to upload image: ${uploadError.message}`)
+        }
+      }
     }
 
     const damageReport = new DamageReport({
@@ -276,12 +272,12 @@ app.post('/api/damages', upload.array('photos', 5), async (req, res) => {
         longitude: parseFloat(longitude),
         address: address?.trim() || ''
       },
-      photos: photoUrls
+      photos: photos
     })
 
     await damageReport.save()
 
-    console.log(`✅ Damage report created (with files): ${damageReport._id}`)
+    console.log(`✅ Damage report created with Cloudinary: ${damageReport._id}`)
 
     res.status(201).json({
       success: true,
@@ -289,16 +285,7 @@ app.post('/api/damages', upload.array('photos', 5), async (req, res) => {
       damage: damageReport
     })
   } catch (error) {
-    console.error('❌ Create damage (with files) error:', error)
-    
-    // Clean up uploaded files on error
-    if (req.files) {
-      req.files.forEach(file => {
-        if (fs.existsSync(file.path)) {
-          fs.unlinkSync(file.path)
-        }
-      })
-    }
+    console.error('❌ Create damage error:', error)
     
     res.status(500).json({ 
       success: false,
@@ -339,6 +326,20 @@ app.post('/api/damages/json', async (req, res) => {
       })
     }
 
+    // Format photos array if needed
+    const formattedPhotos = Array.isArray(photos) 
+      ? photos.map(photo => {
+          if (typeof photo === 'string') {
+            return {
+              url: photo,
+              publicId: `manual-upload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              uploadedAt: new Date()
+            }
+          }
+          return photo
+        }).filter(photo => photo && photo.url)
+      : []
+
     const damageReport = new DamageReport({
       description: description.trim(),
       severity,
@@ -348,7 +349,7 @@ app.post('/api/damages/json', async (req, res) => {
         longitude: parseFloat(longitude),
         address: address?.trim() || ''
       },
-      photos: Array.isArray(photos) ? photos.filter(url => url && typeof url === 'string') : []
+      photos: formattedPhotos
     })
 
     await damageReport.save()
@@ -420,7 +421,7 @@ app.get('/api/stats', async (req, res) => {
   }
 })
 
-// ✅ SEED TEST DATA
+// ✅ SEED TEST DATA (UPDATED FOR CLOUDINARY)
 app.post('/api/seed', async (req, res) => {
   try {
     // Clear existing data
@@ -437,7 +438,13 @@ app.post('/api/seed', async (req, res) => {
           longitude: 79.8612,
           address: "Colombo 05, Colombo District"
         },
-        photos: ["/uploads/demo-roof.jpg"],
+        photos: [
+          {
+            url: "https://images.unsplash.com/photo-1595877256737-f0e0d0440e6f?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+            publicId: "demo-roof-damage",
+            uploadedAt: new Date(now.getTime() - 2 * 60 * 60 * 1000)
+          }
+        ],
         verificationStatus: "verified",
         createdAt: new Date(now.getTime() - 2 * 60 * 60 * 1000)
       },
@@ -450,7 +457,13 @@ app.post('/api/seed', async (req, res) => {
           longitude: 80.6337,
           address: "Kandy City, Kandy District"
         },
-        photos: ["/uploads/demo-tree.jpg"],
+        photos: [
+          {
+            url: "https://images.unsplash.com/photo-1540322356050-fb4e5ad60cec?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+            publicId: "demo-fallen-tree",
+            uploadedAt: new Date(now.getTime() - 24 * 60 * 60 * 1000)
+          }
+        ],
         verificationStatus: "pending",
         createdAt: new Date(now.getTime() - 24 * 60 * 60 * 1000)
       },
@@ -463,7 +476,13 @@ app.post('/api/seed', async (req, res) => {
           longitude: 80.2210,
           address: "Galle Fort, Galle District"
         },
-        photos: ["/uploads/demo-flood.jpg"],
+        photos: [
+          {
+            url: "https://images.unsplash.com/photo-1534088568595-a066f410bcda?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+            publicId: "demo-flood-damage",
+            uploadedAt: new Date(now.getTime() - 48 * 60 * 60 * 1000)
+          }
+        ],
         verificationStatus: "verified",
         createdAt: new Date(now.getTime() - 48 * 60 * 60 * 1000)
       }
@@ -509,14 +528,31 @@ app.put('/api/damages/:id', async (req, res) => {
   }
 })
 
-// Delete damage report
+// Delete damage report (with Cloudinary cleanup)
 app.delete('/api/damages/:id', async (req, res) => {
   try {
-    const damage = await DamageReport.findByIdAndDelete(req.params.id)
+    const damage = await DamageReport.findById(req.params.id)
 
     if (!damage) {
       return res.status(404).json({ error: 'Damage report not found' })
     }
+
+    // Delete images from Cloudinary if they exist
+    if (damage.photos && damage.photos.length > 0) {
+      for (const photo of damage.photos) {
+        if (photo.publicId && !photo.publicId.startsWith('manual-upload-')) {
+          try {
+            await deleteFromCloudinary(photo.publicId)
+            console.log(`✅ Deleted Cloudinary image: ${photo.publicId}`)
+          } catch (cloudinaryError) {
+            console.warn(`⚠️ Could not delete Cloudinary image ${photo.publicId}:`, cloudinaryError.message)
+          }
+        }
+      }
+    }
+
+    // Delete from database
+    await DamageReport.findByIdAndDelete(req.params.id)
 
     res.json({
       success: true,
@@ -528,23 +564,34 @@ app.delete('/api/damages/:id', async (req, res) => {
   }
 })
 
-// ✅ CLEANUP ENDPOINT (for testing)
+// ✅ CLEANUP ENDPOINT (updated for Cloudinary)
 app.delete('/api/cleanup', async (req, res) => {
   try {
+    // Get all damage reports first
+    const damages = await DamageReport.find({})
+    
+    // Delete images from Cloudinary (excluding manual uploads)
+    for (const damage of damages) {
+      if (damage.photos && damage.photos.length > 0) {
+        for (const photo of damage.photos) {
+          if (photo.publicId && !photo.publicId.startsWith('manual-upload-')) {
+            try {
+              await deleteFromCloudinary(photo.publicId)
+            } catch (error) {
+              console.log(`⚠️ Could not delete Cloudinary image: ${photo.publicId}`)
+            }
+          }
+        }
+      }
+    }
+    
     // Clear database
     await DamageReport.deleteMany({})
     
-    // Clear uploads directory
-    const files = fs.readdirSync(uploadsDir)
-    files.forEach(file => {
-      if (file !== '.gitkeep') { // Keep .gitkeep if exists
-        fs.unlinkSync(path.join(uploadsDir, file))
-      }
-    })
-    
     res.json({
       success: true,
-      message: 'Database and uploads cleaned up'
+      message: 'Database and Cloudinary images cleaned up',
+      deleted: damages.length
     })
   } catch (error) {
     console.error('Cleanup error:', error)
@@ -612,15 +659,13 @@ async function startServer() {
 🌱 Seed test data: POST http://localhost:${PORT}/api/seed
 🧹 Cleanup: DELETE http://localhost:${PORT}/api/cleanup
 
-📸 FILE UPLOAD ENDPOINT:
+☁️  CLOUDINARY FILE UPLOAD:
 POST http://localhost:${PORT}/api/damages
 Content-Type: multipart/form-data
 
 📝 JSON-ONLY ENDPOINT:
 POST http://localhost:${PORT}/api/damages/json  
 Content-Type: application/json
-
-📁 Uploads served at: http://localhost:${PORT}/uploads/
       `)
     })
     
