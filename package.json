@@ -1,6 +1,12 @@
 {
   "dependencies": {
     "cloudinary": "^1.41.3",
-    "multer-storage-cloudinary": "^4.0.0"
+    "date-fns": "^4.1.0",
+    "leaflet": "^1.9.4",
+    "multer-storage-cloudinary": "^4.0.0",
+    "react-countup": "^6.5.3",
+    "react-dropzone": "^14.3.8",
+    "react-leaflet-markercluster": "^5.0.0-rc.0",
+    "recharts": "^3.5.1"
   }
 }
